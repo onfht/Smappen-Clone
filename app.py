@@ -30,8 +30,8 @@ st.set_page_config(
 DEFAULT_A = "5 Rue Léon Gambetta, 31000 Toulouse"
 DEFAULT_B = "8 Rue du Faubourg du Courreau, 34000 Montpellier"
 CARTO_LIGHT_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-ADDRESS_COLORS = {"Adresse A": "#E31A1C", "Adresse B": "#377EB8"}
-ADDRESS_FILL_COLORS = {"Adresse A": [228, 26, 28, 120], "Adresse B": [55, 126, 184, 120]}
+ADDRESS_COLORS = {"Adresse A": "#C46A4A", "Adresse B": "#0B1F5E"}
+ADDRESS_FILL_COLORS = {"Adresse A": [196, 106, 74, 120], "Adresse B": [11, 31, 94, 120]}
 
 PERCENT_METRICS = {
     "poverty_rate_households",
@@ -111,8 +111,8 @@ MAP_POI_CATEGORIES = [
 MAP_POI_COLORS = {
     "kindergartens": [244, 143, 177, 220],
     "primary_schools": [255, 202, 40, 220],
-    "middle_schools": [141, 110, 99, 220],
-    "high_schools": [126, 87, 194, 220],
+    "middle_schools": [102, 187, 106, 220],
+    "high_schools": [121, 85, 72, 220],
     "higher_education": [57, 73, 171, 220],
     "tea_rooms": [0, 137, 123, 220],
     "bakeries_pastries": [251, 140, 0, 220],
@@ -680,7 +680,7 @@ def render_category_charts(category_name: str, raw_group_df: pd.DataFrame, metri
     if working_df.empty:
         return
 
-    if category_name == "Profil sociodémographique":
+    if category_name == "Profil socio-démographique":
         age_labels = [
             ("Part 0–17 ans", "0–17 ans"),
             ("Part 18–39 ans", "18–39 ans"),
@@ -749,32 +749,6 @@ def render_category_charts(category_name: str, raw_group_df: pd.DataFrame, metri
             )
         return
 
-    if category_name == "CSP des actifs 15–64 ans":
-        csp_order = [
-            "Agriculteurs",
-            "Artisans / commerçants / chefs d'entreprise",
-            "Cadres & prof. intellectuelles sup.",
-            "Professions intermédiaires",
-            "Employés",
-            "Ouvriers",
-        ]
-        distributions = {
-            address_name: {
-                label: _safe_number(_value_from_metric(working_df, label, address_name)) or 0
-                for label in csp_order
-            }
-            for address_name in ["Adresse A", "Adresse B"]
-        }
-        if any(sum(dist.values()) > 0 for dist in distributions.values()):
-            st.plotly_chart(
-                _build_stacked_columns_chart(distributions, CSP_SEGMENT_COLORS, "Répartition des CSP des actifs 15–64 ans"),
-                use_container_width=True,
-                config={"displayModeBar": False},
-            )
-        else:
-            st.caption("CSP non disponibles dans le fichier RP 2021 chargé.")
-        return
-
     working_df["chart_group"] = working_df["metric"].map(
         lambda label: _chart_group_for_metric(metric_key_map.get(label, label))
     )
@@ -798,7 +772,7 @@ def render_category_charts(category_name: str, raw_group_df: pd.DataFrame, metri
         fig = _build_grouped_bar_chart(non_percent, metric_key_map, title, normalized=use_indexed)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         if use_indexed:
-            st.caption("Lecture relative : pour chaque ligne, la meilleure des deux adresses vaut 100. Les valeurs exactes restent dans le tableau.")
+            pass
 
     if not percent_df.empty:
         fig = _build_percent_grouped_bar_chart(percent_df, metric_key_map, "Comparaison des parts / taux")
@@ -1139,12 +1113,33 @@ CSP_SEGMENT_COLORS = {
 }
 
 
-def build_advantages_and_drawbacks(results: dict[str, dict]) -> tuple[list[str], list[str]]:
+def _metric_card_spec(label: str, a_value, b_value, metric_key: str, *, higher_is_better: bool) -> dict | None:
+    score = _score_metric_for_a(a_value, b_value, higher_is_better=higher_is_better)
+    a_num = _safe_number(a_value)
+    b_num = _safe_number(b_value)
+    if score is None or a_num is None or b_num is None or a_num == b_num:
+        return None
+    favorable = (a_num > b_num) if higher_is_better else (a_num < b_num)
+    return {
+        "label": label,
+        "a_value": a_value,
+        "b_value": b_value,
+        "metric_key": metric_key,
+        "higher_is_better": higher_is_better,
+        "favorable": favorable,
+        "score": abs(score),
+    }
+
+
+
+def build_advantages_and_drawbacks(results: dict[str, dict]) -> tuple[list[dict], list[dict]]:
     a = results["Adresse A"]
     b = results["Adresse B"]
     candidate_specs = [
         ("Population estimée", a["filosofi_raw"].get("ind"), b["filosofi_raw"].get("ind"), "ind", True),
         ("Ménages estimés", a["filosofi_raw"].get("men"), b["filosofi_raw"].get("men"), "men", True),
+        ("Taille moyenne ménage", a["filosofi_derived"].get("avg_household_size"), b["filosofi_derived"].get("avg_household_size"), "avg_household_size", True),
+        ("Densité pop. (hab/km²)", a["filosofi_derived"].get("population_density"), b["filosofi_derived"].get("population_density"), "population_density", True),
         ("Niveau de vie moyen winsorisé / pers.", a["filosofi_derived"].get("avg_winsorized_living_standard_per_person"), b["filosofi_derived"].get("avg_winsorized_living_standard_per_person"), "avg_winsorized_living_standard_per_person", True),
         ("Part 18–39 ans", a["filosofi_derived"].get("share_18_39"), b["filosofi_derived"].get("share_18_39"), "share_18_39", True),
         ("Taux de pauvreté ménages", a["filosofi_derived"].get("poverty_rate_households"), b["filosofi_derived"].get("poverty_rate_households"), "poverty_rate_households", False),
@@ -1158,18 +1153,91 @@ def build_advantages_and_drawbacks(results: dict[str, dict]) -> tuple[list[str],
     positives = []
     negatives = []
     for label, a_value, b_value, metric_key, higher_is_better in candidate_specs:
-        score = _score_metric_for_a(a_value, b_value, higher_is_better=higher_is_better)
-        text_item = _advantage_text(label, a_value, b_value, metric_key, higher_is_better=higher_is_better)
-        if score is None or score == 0 or text_item is None:
+        spec = _metric_card_spec(label, a_value, b_value, metric_key, higher_is_better=higher_is_better)
+        if spec is None:
             continue
-        if score > 0:
-            positives.append((score, text_item))
+        if spec["favorable"]:
+            positives.append(spec)
         else:
-            negatives.append((abs(score), text_item))
+            negatives.append(spec)
 
-    top_positive = [text for _, text in sorted(positives, key=lambda item: item[0], reverse=True)[:3]]
-    top_negative = [text for _, text in sorted(negatives, key=lambda item: item[0], reverse=True)[:3]]
+    top_positive = sorted(positives, key=lambda item: item["score"], reverse=True)[:3]
+    top_negative = sorted(negatives, key=lambda item: item["score"], reverse=True)[:3]
     return top_positive, top_negative
+
+
+
+def _indicator_number_kwargs(metric_key: str) -> dict:
+    if metric_key in PERCENT_METRICS:
+        return {"valueformat": ".1%"}
+    if "standard" in metric_key:
+        return {"valueformat": ",.0f", "prefix": "€"}
+    if "area" in metric_key:
+        return {"valueformat": ",.1f", "suffix": " m²"}
+    if metric_key == "avg_household_size":
+        return {"valueformat": ",.2f"}
+    return {"valueformat": ",.0f"}
+
+
+
+def _render_top_metric_card(item: dict, *, accent: str):
+    metric_key = item["metric_key"]
+    a_value = _safe_number(item["a_value"])
+    b_value = _safe_number(item["b_value"])
+    if a_value is None or b_value is None:
+        st.info("Donnée indisponible")
+        return
+
+    relative_delta = b_value not in (0, None)
+    fig = go.Figure()
+    fig.add_trace(
+        go.Indicator(
+            mode="number+delta",
+            value=a_value,
+            number=_indicator_number_kwargs(metric_key),
+            delta={
+                "reference": b_value,
+                "relative": relative_delta,
+                "valueformat": ".1%" if relative_delta else ",.0f",
+                "increasing": {"color": "#10B981" if item["favorable"] else "#EF4444"},
+                "decreasing": {"color": "#EF4444" if item["favorable"] else "#10B981"},
+            },
+            title={"text": item["label"]},
+            domain={"x": [0, 1], "y": [0, 1]},
+        )
+    )
+    _plotly_base_layout(fig, height=185)
+    fig.update_traces(number_font_size=28, title_font_size=14)
+    fig.update_layout(margin=dict(l=10, r=10, t=44, b=0))
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.caption(
+        f"A : {format_metric(metric_key, item['a_value'])} | "
+        f"B : {format_metric(metric_key, item['b_value'])} | "
+        f"Delta : {_format_delta_ratio(item['a_value'], item['b_value'], metric_key)}"
+    )
+
+
+
+def render_advantages_visual_cards(pros: list[dict], cons: list[dict]):
+    st.subheader("Top 3 des avantages / inconvénients de l'adresse A")
+    if pros:
+        st.markdown("**Top 3 avantages de l'adresse A vs B**")
+        top_cols = st.columns(3)
+        for col, item in zip(top_cols, pros):
+            with col:
+                _render_top_metric_card(item, accent=ADDRESS_COLORS["Adresse A"])
+    else:
+        st.info("Aucun avantage saillant détecté pour l'adresse A sur les indicateurs calculés.")
+
+    if cons:
+        st.markdown("**Top 3 inconvénients de l'adresse A vs B**")
+        bottom_cols = st.columns(3)
+        for col, item in zip(bottom_cols, cons):
+            with col:
+                _render_top_metric_card(item, accent=ADDRESS_COLORS["Adresse B"])
+    else:
+        st.info("Aucun inconvénient saillant détecté pour l'adresse A sur les indicateurs calculés.")
+
 
 
 def narrative(results: dict[str, dict], catchment_mode: str) -> str:
@@ -1223,30 +1291,13 @@ if run:
                 ),
             }
 
-        st.subheader("Synthèse visuelle")
-        render_summary_visuals(results)
-
         if all((results[name]["filosofi_cells"] == 0 for name in results)):
             st.warning(
                 "Les deux zones retournent 0 carreau Filosofi intersecté. Cela pointe généralement vers un mauvais .gpkg, "
                 "une extraction partielle, ou un problème de projection."
             )
 
-        st.subheader("Top 3 des avantages / inconvénients de l'adresse A")
         pros, cons = build_advantages_and_drawbacks(results)
-        col_pros, col_cons = st.columns(2)
-        with col_pros:
-            st.markdown("**Avantages de l'adresse A vs B**")
-            if pros:
-                st.markdown("\n".join([f"{idx}. {item}" for idx, item in enumerate(pros, start=1)]))
-            else:
-                st.write("Pas d'avantage saillant détecté sur les indicateurs calculés.")
-        with col_cons:
-            st.markdown("**Inconvénients de l'adresse A vs B**")
-            if cons:
-                st.markdown("\n".join([f"{idx}. {item}" for idx, item in enumerate(cons, start=1)]))
-            else:
-                st.write("Pas d'inconvénient saillant détecté sur les indicateurs calculés.")
 
         st.subheader("Cartes")
         map_col_a, map_col_b = st.columns(2)
@@ -1266,27 +1317,15 @@ if run:
                     use_container_width=True,
                 )
         render_map_legend(selected_poi_categories)
+        st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+        render_advantages_visual_cards(pros, cons)
 
         grouped_metric_specs = {
             "Bassin de clientèle": [
                 ("Population estimée", "filosofi_raw", "ind"),
                 ("Ménages estimés", "filosofi_raw", "men"),
-                ("Densité pop. (hab/km²)", "filosofi_derived", "population_density"),
                 ("Taille moyenne ménage", "filosofi_derived", "avg_household_size"),
-            ],
-            "Pouvoir d'achat & habitat": [
-                ("Niveau de vie moyen winsorisé / pers.", "filosofi_derived", "avg_winsorized_living_standard_per_person"),
-                ("Taux de pauvreté ménages", "filosofi_derived", "poverty_rate_households"),
-                ("Taux de propriétaires", "filosofi_derived", "owner_rate"),
-                ("Part logements sociaux", "filosofi_derived", "social_housing_rate"),
-                ("Surface moyenne logement (m²/ménage)", "filosofi_derived", "avg_dwelling_area_m2_per_household"),
-                ("Part population imputée", "filosofi_derived", "imputation_population_share"),
-            ],
-            "Profil sociodémographique": [
-                ("Part 0–17 ans", "filosofi_derived", "share_0_17"),
-                ("Part 18–39 ans", "filosofi_derived", "share_18_39"),
-                ("Part 40–64 ans", "filosofi_derived", "share_40_64"),
-                ("Part 65+", "filosofi_derived", "share_65_plus"),
+                ("Densité pop. (hab/km²)", "filosofi_derived", "population_density"),
             ],
             "Environnement commercial": [
                 (POI_LABELS["tea_rooms"], "poi_counts", "tea_rooms"),
@@ -1302,9 +1341,23 @@ if run:
                 (POI_LABELS["higher_education"], "poi_counts", "higher_education"),
                 (POI_LABELS["schools_total"], "poi_counts", "schools_total"),
             ],
+            "Pouvoir d'achat & habitat": [
+                ("Niveau de vie moyen winsorisé / pers.", "filosofi_derived", "avg_winsorized_living_standard_per_person"),
+                ("Taux de pauvreté ménages", "filosofi_derived", "poverty_rate_households"),
+                ("Taux de propriétaires", "filosofi_derived", "owner_rate"),
+                ("Part logements sociaux", "filosofi_derived", "social_housing_rate"),
+                ("Surface moyenne logement (m²/ménage)", "filosofi_derived", "avg_dwelling_area_m2_per_household"),
+                ("Part population imputée", "filosofi_derived", "imputation_population_share"),
+            ],
+            "Profil socio-démographique": [
+                ("Part 0–17 ans", "filosofi_derived", "share_0_17"),
+                ("Part 18–39 ans", "filosofi_derived", "share_18_39"),
+                ("Part 40–64 ans", "filosofi_derived", "share_40_64"),
+                ("Part 65+", "filosofi_derived", "share_65_plus"),
+            ],
         }
 
-        grouped_metric_specs["Profil sociodémographique"].extend(
+        grouped_metric_specs["Profil socio-démographique"].extend(
             [
                 ("Part <15 ans (RP 2021)", "rp_derived", "share_under_15"),
                 ("Part 15–64 ans (RP 2021)", "rp_derived", "share_15_64"),
@@ -1312,14 +1365,6 @@ if run:
                 ("Part mobilité résidentielle externe (RP 2021)", "rp_derived", "moved_from_elsewhere_share"),
             ]
         )
-        grouped_metric_specs["CSP des actifs 15–64 ans"] = [
-            ("Agriculteurs", "rp_derived", "csp_cs1_share"),
-            ("Artisans / commerçants / chefs d'entreprise", "rp_derived", "csp_cs2_share"),
-            ("Cadres & prof. intellectuelles sup.", "rp_derived", "csp_cs3_share"),
-            ("Professions intermédiaires", "rp_derived", "csp_cs4_share"),
-            ("Employés", "rp_derived", "csp_cs5_share"),
-            ("Ouvriers", "rp_derived", "csp_cs6_share"),
-        ]
 
         flat_metric_specs = []
         metric_key_map = {}
@@ -1329,15 +1374,15 @@ if run:
                 metric_key_map[label] = metric_name
 
         comparison_df = make_manual_comparison_rows(results, flat_metric_specs)
-        styled_df = format_comparison_frame(comparison_df, metric_key_map)
 
-        st.subheader("Tableau de comparaison")
-        for category in grouped_metric_specs:
+        st.subheader("Comparaison graphique")
+        for idx, category in enumerate(grouped_metric_specs):
             st.markdown(f"**{category}**")
             raw_group_df = comparison_df[comparison_df["category"] == category].copy()
-            group_df = styled_df[styled_df["category"] == category].drop(columns=["category"])
-            st.dataframe(group_df, use_container_width=True, hide_index=True)
             render_category_charts(category, raw_group_df, metric_key_map)
+            if idx < len(grouped_metric_specs) - 1:
+                st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+                st.divider()
 
         poi_status = [payload.get("poi_meta", {}).get("status") for payload in results.values()]
         if any(status == "error" for status in poi_status):
