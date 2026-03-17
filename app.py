@@ -30,8 +30,8 @@ st.set_page_config(
 DEFAULT_A = "5 Rue Léon Gambetta, 31000 Toulouse"
 DEFAULT_B = "8 Rue du Faubourg du Courreau, 34000 Montpellier"
 CARTO_LIGHT_STYLE = "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-ADDRESS_COLORS = {"Adresse A": "#D86D8C", "Adresse B": "#0077B6"}
-ADDRESS_FILL_COLORS = {"Adresse A": [216, 109, 140, 120], "Adresse B": [0, 119, 182, 120]}
+ADDRESS_COLORS = {"Adresse A": "#E31A1C", "Adresse B": "#377EB8"}
+ADDRESS_FILL_COLORS = {"Adresse A": [228, 26, 28, 120], "Adresse B": [55, 126, 184, 120]}
 
 PERCENT_METRICS = {
     "poverty_rate_households",
@@ -111,8 +111,8 @@ MAP_POI_CATEGORIES = [
 MAP_POI_COLORS = {
     "kindergartens": [244, 143, 177, 220],
     "primary_schools": [255, 202, 40, 220],
-    "middle_schools": [102, 187, 106, 220],
-    "high_schools": [121, 85, 72, 220],
+    "middle_schools": [141, 110, 99, 220],
+    "high_schools": [126, 87, 194, 220],
     "higher_education": [57, 73, 171, 220],
     "tea_rooms": [0, 137, 123, 220],
     "bakeries_pastries": [251, 140, 0, 220],
@@ -506,16 +506,34 @@ def _display_value_for_chart(metric_key: str, value) -> float | None:
     return value
 
 
-def _build_grouped_bar_chart(df: pd.DataFrame, metric_key_map: dict[str, str], title: str) -> go.Figure:
+def _build_grouped_bar_chart(df: pd.DataFrame, metric_key_map: dict[str, str], title: str, *, normalized: bool = False) -> go.Figure:
     working = df.copy()
-    working["Adresse A"] = [_display_value_for_chart(metric_key_map.get(metric, metric), value) or 0 for metric, value in zip(working["metric"], working["Adresse A"])]
-    working["Adresse B"] = [_display_value_for_chart(metric_key_map.get(metric, metric), value) or 0 for metric, value in zip(working["metric"], working["Adresse B"])]
+    if normalized:
+        source = df.copy()
+        baselines = [
+            max(
+                abs(float(a)) if pd.notna(a) else 0,
+                abs(float(b)) if pd.notna(b) else 0,
+            )
+            for a, b in zip(source["Adresse A"], source["Adresse B"])
+        ]
+        working["Adresse A"] = [0 if base == 0 else (float(v) / base * 100) for v, base in zip(source["Adresse A"], baselines)]
+        working["Adresse B"] = [0 if base == 0 else (float(v) / base * 100) for v, base in zip(source["Adresse B"], baselines)]
+        x_title = "Indice relatif (max de la ligne = 100)"
+        text_a = [format_metric(metric_key_map.get(metric, metric), value) for metric, value in zip(df["metric"], df["Adresse A"])]
+        text_b = [format_metric(metric_key_map.get(metric, metric), value) for metric, value in zip(df["metric"], df["Adresse B"])]
+    else:
+        working["Adresse A"] = [_display_value_for_chart(metric_key_map.get(metric, metric), value) or 0 for metric, value in zip(working["metric"], working["Adresse A"])]
+        working["Adresse B"] = [_display_value_for_chart(metric_key_map.get(metric, metric), value) or 0 for metric, value in zip(working["metric"], working["Adresse B"])]
+        x_title = "Valeur"
+        text_a = [format_metric(metric_key_map.get(metric, metric), value) for metric, value in zip(df["metric"], df["Adresse A"])]
+        text_b = [format_metric(metric_key_map.get(metric, metric), value) for metric, value in zip(df["metric"], df["Adresse B"])]
 
     working["max_value"] = working[["Adresse A", "Adresse B"]].max(axis=1)
     working = working.sort_values("max_value", ascending=True)
     metric_order = working["metric"].tolist()
-    text_a_map = {metric: format_metric(metric_key_map.get(metric, metric), value) for metric, value in zip(df["metric"], df["Adresse A"])}
-    text_b_map = {metric: format_metric(metric_key_map.get(metric, metric), value) for metric, value in zip(df["metric"], df["Adresse B"])}
+    text_a_map = dict(zip(df["metric"], text_a))
+    text_b_map = dict(zip(df["metric"], text_b))
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -524,7 +542,6 @@ def _build_grouped_bar_chart(df: pd.DataFrame, metric_key_map: dict[str, str], t
         text=[text_a_map[m] for m in metric_order], textposition="outside", cliponaxis=False,
         hovertemplate="%{y}<br>Adresse A : %{text}<extra></extra>",
         offsetgroup="a",
-        legendrank=1,
     ))
     fig.add_trace(go.Bar(
         x=working["Adresse B"], y=metric_order, name="Adresse B", orientation="h",
@@ -532,64 +549,37 @@ def _build_grouped_bar_chart(df: pd.DataFrame, metric_key_map: dict[str, str], t
         text=[text_b_map[m] for m in metric_order], textposition="outside", cliponaxis=False,
         hovertemplate="%{y}<br>Adresse B : %{text}<extra></extra>",
         offsetgroup="b",
-        legendrank=2,
     ))
-    fig.update_layout(barmode="group", title=title, xaxis_title="Valeur", yaxis_title=None)
+    fig.update_layout(barmode="group", title=title, xaxis_title=x_title, yaxis_title=None)
     fig.update_xaxes(showgrid=True, gridcolor="rgba(0,0,0,0.08)")
     fig.update_yaxes(automargin=True)
     return _plotly_base_layout(fig, height=max(300, 70 * len(metric_order) + 80))
 
 
-def _build_non_percent_100_stacked_chart(df: pd.DataFrame, metric_key_map: dict[str, str], title: str) -> go.Figure:
-    working = df.copy()
-    working["a_value"] = [_safe_number(value) or 0 for value in working["Adresse A"]]
-    working["b_value"] = [_safe_number(value) or 0 for value in working["Adresse B"]]
-    working["total"] = working["a_value"] + working["b_value"]
-    working = working[working["total"] > 0].copy()
-    if working.empty:
-        return _plotly_base_layout(go.Figure(), height=320)
-
-    working["Adresse A %"] = (working["a_value"] / working["total"] * 100).round(2)
-    working["Adresse B %"] = (working["b_value"] / working["total"] * 100).round(2)
-    working = working.sort_values("Adresse A %", ascending=False)
-
-    metric_order = working["metric"].tolist()
-    a_text = [f"{value:.0f}%" if value >= 11 else "" for value in working["Adresse A %"]]
-    b_text = [f"{value:.0f}%" if value >= 11 else "" for value in working["Adresse B %"]]
-
+def _build_vertical_dual_bar_chart(title: str, metric_key: str, a_value, b_value) -> go.Figure:
+    categories = ["Adresse A", "Adresse B"]
+    values = [
+        _display_value_for_chart(metric_key, a_value) or 0,
+        _display_value_for_chart(metric_key, b_value) or 0,
+    ]
+    text_values = [format_metric(metric_key, a_value), format_metric(metric_key, b_value)]
     fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=metric_order,
-        y=working["Adresse B %"],
-        name="Adresse B",
-        marker=dict(color=ADDRESS_COLORS["Adresse B"]),
-        text=b_text,
-        textposition="inside",
-        hovertemplate="<b>%{x}</b><br>Adresse B : %{customdata[0]}<br>Part du total A+B : %{y:.1f}%<extra></extra>",
-        customdata=[[format_metric(metric_key_map.get(metric, metric), value)] for metric, value in zip(working["metric"], working["b_value"])],
-        legendrank=2,
-    ))
-    fig.add_trace(go.Bar(
-        x=metric_order,
-        y=working["Adresse A %"],
-        name="Adresse A",
-        marker=dict(color=ADDRESS_COLORS["Adresse A"]),
-        text=a_text,
-        textposition="inside",
-        hovertemplate="<b>%{x}</b><br>Adresse A : %{customdata[0]}<br>Part du total A+B : %{y:.1f}%<extra></extra>",
-        customdata=[[format_metric(metric_key_map.get(metric, metric), value)] for metric, value in zip(working["metric"], working["a_value"])],
-        legendrank=1,
-    ))
-    fig.update_layout(
-        title=title,
-        barmode="stack",
-        xaxis_title=None,
-        yaxis_title=None,
-        bargap=0.22,
+    fig.add_trace(
+        go.Bar(
+            x=categories,
+            y=values,
+            marker=dict(color=[ADDRESS_COLORS["Adresse A"], ADDRESS_COLORS["Adresse B"]]),
+            text=text_values,
+            textposition="outside",
+            hovertemplate="%{x}<br>%{text}<extra></extra>",
+            showlegend=False,
+            marker_line_width=0,
+            opacity=0.92,
+        )
     )
-    fig.update_yaxes(range=[0, 100], ticksuffix="%", showgrid=True, gridcolor="rgba(0,0,0,0.08)")
-    fig.update_xaxes(tickangle=-18, showgrid=False)
-    return _plotly_base_layout(fig, height=max(320, 105 * math.ceil(len(metric_order) / 4)))
+    fig.update_layout(title=title, xaxis_title=None, yaxis_title=None)
+    fig.update_yaxes(showgrid=True, gridcolor="rgba(0,0,0,0.08)")
+    return _plotly_base_layout(fig, height=300)
 
 
 
@@ -668,7 +658,7 @@ def _build_stacked_columns_chart(distributions: dict[str, dict[str, float]], col
 
 
 def _build_percent_grouped_bar_chart(df: pd.DataFrame, metric_key_map: dict[str, str], title: str) -> go.Figure:
-    return _build_grouped_bar_chart(df, metric_key_map, title)
+    return _build_grouped_bar_chart(df, metric_key_map, title, normalized=False)
 
 
 
@@ -729,16 +719,21 @@ def render_category_charts(category_name: str, raw_group_df: pd.DataFrame, metri
         return
 
     if category_name == "Pouvoir d'achat & habitat":
-        level_metrics = working_df[working_df["metric"].isin([
-            "Niveau de vie moyen winsorisé / pers.",
-            "Surface moyenne logement (m²/ménage)",
-        ])].copy()
-        if not level_metrics.empty and _has_any_values(level_metrics["Adresse A"].tolist() + level_metrics["Adresse B"].tolist()):
-            st.plotly_chart(
-                _build_non_percent_100_stacked_chart(level_metrics, metric_key_map, "Poids relatif sur les indicateurs de niveau de vie & surface"),
-                use_container_width=True,
-                config={"displayModeBar": False},
-            )
+        levels_cols = st.columns(2)
+        level_specs = [
+            ("Niveau de vie moyen winsorisé / pers.", "avg_winsorized_living_standard_per_person"),
+            ("Surface moyenne logement (m²/ménage)", "avg_dwelling_area_m2_per_household"),
+        ]
+        for idx, (label, metric_key) in enumerate(level_specs):
+            a_value = _value_from_metric(working_df, label, "Adresse A")
+            b_value = _value_from_metric(working_df, label, "Adresse B")
+            if _has_any_values([a_value, b_value]):
+                with levels_cols[idx]:
+                    st.plotly_chart(
+                        _build_vertical_dual_bar_chart(label, metric_key, a_value, b_value),
+                        use_container_width=True,
+                        config={"displayModeBar": False},
+                    )
 
         rate_metrics = working_df[working_df["metric"].isin([
             "Taux de pauvreté ménages",
@@ -788,8 +783,22 @@ def render_category_charts(category_name: str, raw_group_df: pd.DataFrame, metri
     percent_df = working_df[working_df["chart_group"] == "percent"].copy()
 
     if not non_percent.empty:
-        fig = _build_non_percent_100_stacked_chart(non_percent, metric_key_map, "Répartition relative A / B par indicateur")
+        chart_values = []
+        for _, row in non_percent.iterrows():
+            for col in ["Adresse A", "Adresse B"]:
+                value = _display_value_for_chart(metric_key_map.get(row["metric"], row["metric"]), row[col])
+                if value and value > 0:
+                    chart_values.append(value)
+        use_indexed = False
+        if chart_values:
+            positive = [v for v in chart_values if v > 0]
+            if positive and (max(positive) / max(min(positive), 1e-9)) > 20:
+                use_indexed = True
+        title = "Lecture relative" if use_indexed else "Comparaison directe"
+        fig = _build_grouped_bar_chart(non_percent, metric_key_map, title, normalized=use_indexed)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        if use_indexed:
+            st.caption("Lecture relative : pour chaque ligne, la meilleure des deux adresses vaut 100. Les valeurs exactes restent dans le tableau.")
 
     if not percent_df.empty:
         fig = _build_percent_grouped_bar_chart(percent_df, metric_key_map, "Comparaison des parts / taux")
