@@ -8,10 +8,9 @@ Application Streamlit pour comparer deux adresses (ex. Toulouse vs Montpellier) 
 - rayon circulaire **ou** isochrone piéton / voiture ;
 - agrégation de **Filosofi 2021 – carreaux 200 m** ;
 - intégration du **recensement 2021 – carreaux 1 km** ;
-- 2 cartes interactives côte à côte et comparaison visuelle ;
+- 2 cartes interactives côte à côte, synthèse visuelle et export CSV ;
 - comptage des commerces et établissements scolaires dans le périmètre sélectionné (source OpenStreetMap / Overpass) ;
-- détection automatique de **plusieurs fichiers locaux** pour le même dataset (ex. `filosofi_toulouse.gpkg` + `filosofi_montpellier.gpkg`) ;
-- optimisation Streamlit : les **petits extraits locaux** sont gardés en mémoire pour accélérer les requêtes suivantes.
+- détection automatique des bons `.gpkg` locaux avant tout téléchargement.
 
 ## Installation
 
@@ -28,46 +27,26 @@ python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-## Déploiement Streamlit : stratégie recommandée
-
-Pour Streamlit Community Cloud, la meilleure approche est :
-
-1. **préparer localement des extraits compacts** pour Toulouse et Montpellier ;
-2. les placer dans `data/` dans le repo ;
-3. pousser ces fichiers sur GitHub ;
-4. laisser l'app utiliser ces fichiers **sans téléchargement INSEE au runtime**.
-
-Le script `scripts/build_compact_city_extracts.py` sert à fabriquer ces extraits à partir des GPKG INSEE complets.
-
-Exemple :
-
-```bash
-python scripts/build_compact_city_extracts.py   --filosofi-gpkg "C:/path/to/carreaux_200m_met.gpkg"   --rp-gpkg "C:/path/to/rp2021_carreaux_1km_met.gpkg"   --buffer-km 60   --output-dir data
-```
-
-Le script produit typiquement :
-
-- `data/filosofi_toulouse.gpkg`
-- `data/filosofi_montpellier.gpkg`
-- `data/rp_toulouse.gpkg`
-- `data/rp_montpellier.gpkg`
-
-L'application détecte ensuite automatiquement ces fichiers et les combine si besoin.
-
 ## Où mettre les fichiers `.gpkg`
 
 Tu peux déposer tes fichiers `.gpkg` dans l'un de ces dossiers :
 
 - `data/` à la racine du projet
-- `~/.cache/business_catchment_app/data/`
+- `C:\Users\<toi>\.cache\business_catchment_app\data\`
 
-Pour un déploiement Cloud, privilégie **`data/` dans le repo**.
+L'application inspecte les colonnes des fichiers pour reconnaître automatiquement :
 
-## Conseils perf
+- le bon **Filosofi 2021** (`ind`, `men`, etc.)
+- le bon **Recensement 2021** (`pop`, `pop0014`, etc.)
 
-- privilégie des extraits **Toulouse / Montpellier** plutôt que les GPKG France entière ;
-- si possible, garde les fichiers unitaires sous ~150–180 Mo : l'app les gardera en mémoire et les requêtes suivantes seront bien plus rapides ;
-- si un fichier dépasse la limite GitHub de 100 Mo, réduis le buffer du script ou découpe davantage par zone.
+Pour **Filosofi 200 m**, privilégie explicitement le fichier **métropole**, typiquement nommé `carreaux_200m_met.gpkg`.
+L'app privilégie désormais ce fichier si plusieurs `.gpkg` sont présents, et refuse de sélectionner silencieusement une variante Martinique / Réunion.
+
+## Notes importantes
+
+- Si l'archive INSEE contient un `.7z` imbriqué, l'application peut l'extraire si la dépendance optionnelle `py7zr` est installée.
+- Si tu as déjà extrait manuellement les bons `.gpkg`, il est préférable de les coller dans `data/` et de laisser l'app les utiliser directement.
+- L'export CSV se fait désormais en mémoire : plus de dépendance à `/tmp`, donc plus d'erreur Windows sur ce point.
 
 ## Dépendances principales
 
@@ -76,14 +55,23 @@ Pour un déploiement Cloud, privilégie **`data/` dans le repo**.
 - geopandas
 - shapely
 - pyproj
-- pyogrio
+- fiona
 - requests
 - pydeck
 - py7zr
 - plotly
 
-## Notes
 
-- si aucun fichier local n'est présent, l'app peut encore retomber sur le téléchargement officiel INSEE ;
-- sur Streamlit Cloud, cette voie est nettement plus lente et moins robuste ;
-- les compteurs commerces / écoles restent alimentés par OpenStreetMap / Overpass.
+## Troubleshooting récent
+- **Erreur Streamlit `UnhashableParamError`** : corrigée dans cette version en évitant de passer un objet `DatasetInfo` non hachable au cache de `build_zone()`.
+- **Export CSV Windows** : l'export se fait en mémoire, sans écriture vers `/tmp`.
+- **Archives INSEE avec `.7z` imbriqué** : l'app sait maintenant sélectionner le bon `.gpkg` en vérifiant les colonnes attendues du dataset et en privilégiant explicitement le fichier **métropole**.
+- **Population = 0 partout** : vérifie d'abord que le fichier chargé est bien un `*_met.gpkg`, que le point géocodé tombe dans la zone du dataset et que la projection du périmètre est correcte.
+
+
+## Extension récente
+
+- la synthèse textuelle a été remplacée par une **synthèse visuelle** sous forme de diagrammes ;
+- la table de comparaison inclut les **salons de thé**, **boulangeries/pâtisseries**, **restaurants**, **commerces**, ainsi que les établissements scolaires par niveau ;
+- les cartes peuvent afficher ou masquer de très petits marqueurs pour les écoles, salons de thé et boulangeries/pâtisseries ;
+- le bloc “Résumé géocodage”, l'encart de premier lancement et la section “Détails par adresse” ont été supprimés pour alléger la page.
