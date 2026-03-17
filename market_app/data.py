@@ -5,8 +5,8 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-import fiona
 import geopandas as gpd
+from pyogrio import list_layers as pyogrio_list_layers, read_info
 import pandas as pd
 from pyproj import CRS
 from shapely.geometry import shape
@@ -143,14 +143,14 @@ def _download(url: str, dest: Path) -> None:
 
 def _safe_layers(gpkg_path: Path) -> list[str]:
     try:
-        return list(fiona.listlayers(gpkg_path))
+        return [str(name) for name, _geometry_type in pyogrio_list_layers(gpkg_path)]
     except Exception:
         return []
 
 
 def _layer_columns(gpkg_path: Path, layer: str) -> set[str]:
-    with fiona.open(gpkg_path, layer=layer) as src:
-        return {column.lower() for column in src.schema.get("properties", {}).keys()}
+    info = read_info(gpkg_path, layer=layer)
+    return {str(column).lower() for column in info.get("fields", [])}
 
 
 def _is_matching_dataset(gpkg_path: Path, expected_columns: set[str]) -> tuple[bool, str | None]:
@@ -317,9 +317,9 @@ def _dataset_info(name: str, url: str, dataset_key: str) -> DatasetInfo:
             "Vérifie que tu as copié le bon .gpkg."
         )
 
-    with fiona.open(gpkg_path, layer=layer) as src:
-        crs = CRS.from_user_input(src.crs_wkt or src.crs)
-        bounds = tuple(float(value) for value in src.bounds)
+    info = read_info(gpkg_path, layer=layer)
+    crs = CRS.from_user_input(info["crs"])
+    bounds = tuple(float(value) for value in info["total_bounds"])
 
     return DatasetInfo(
         name=name,
@@ -349,7 +349,7 @@ def _to_numeric(gdf: gpd.GeoDataFrame, columns: list[str]) -> gpd.GeoDataFrame:
 
 
 def load_subset(dataset: DatasetInfo, zone_geometry) -> gpd.GeoDataFrame:
-    gdf = gpd.read_file(dataset.gpkg_path, layer=dataset.layer, bbox=zone_geometry.bounds)
+    gdf = gpd.read_file(dataset.gpkg_path, layer=dataset.layer, bbox=zone_geometry.bounds, engine="pyogrio")
     if gdf.empty:
         return gdf
 
